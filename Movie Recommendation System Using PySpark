@@ -1,0 +1,89 @@
+#Install PySpark to enable the development of the recommendation system.
+!pip install pyspark
+
+from pyspark.sql import SparkSession
+from pyspark.ml.evaluation import RegressionEvaluator
+from pyspark.ml.recommendation import ALS
+from pyspark.ml.tuning import ParamGridBuilder, CrossValidator
+from pyspark.sql.functions import explode
+
+# Initialize Spark session
+spark = SparkSession.builder.appName("Movie Recommendation System").getOrCreate()
+
+# Load the datasets
+ratings = spark.read.csv("./ratings.csv", header=True, inferSchema=True)
+movies = spark.read.csv("./movies.csv", header=True, inferSchema=True)
+
+# Cache the data as they are used multiple times
+ratings.cache()
+movies.cache()
+
+# Data Cleaning (if necessary)
+ratings = ratings.na.drop()
+movies = movies.na.drop()
+
+# Prepare data for ALS
+ratings = ratings.selectExpr("cast(userId as int) userId",
+                             "cast(movieId as int) movieId",
+                             "cast(rating as float) rating")
+
+# Split data into training and test sets
+(training, test) = ratings.randomSplit([0.8, 0.2], seed=1234)
+
+# Build and train the ALS model
+als = ALS(maxIter=5, userCol="userId", itemCol="movieId", ratingCol="rating",
+          coldStartStrategy="drop", nonnegative=True)
+model = als.fit(training)
+
+# Make predictions
+predictions = model.transform(test)
+predictions.show(5)
+
+# Evaluate the model
+evaluator = RegressionEvaluator(metricName="rmse", labelCol="rating", predictionCol="prediction")
+rmse = evaluator.evaluate(predictions)
+print(f"Root-mean-square error = {rmse}")
+
+# Hyperparameter tuning using CrossValidator
+paramGrid = ParamGridBuilder() \
+    .addGrid(als.rank, [10, 50, 100]) \
+    .addGrid(als.regParam, [0.01, 0.05, 0.1]) \
+    .build()
+
+crossval = CrossValidator(estimator=als,
+                          estimatorParamMaps=paramGrid,
+                          evaluator=evaluator,
+                          numFolds=5)
+
+# Perform initial tuning on a smaller sample to save time
+small_training, _ = training.randomSplit([0.1, 0.9], seed=1234)
+initial_cvModel = crossval.fit(small_training)
+
+# Get promising hyperparameters from initial tuning
+best_params = initial_cvModel.bestModel.extractParamMap()
+print(f"Best parameters from initial tuning: {best_params}")
+
+# Refine tuning on full dataset using promising hyperparameters
+cvModel = crossval.fit(training)
+
+# Evaluate best model
+bestModel = cvModel.bestModel
+predictions = bestModel.transform(test)
+rmse = evaluator.evaluate(predictions)
+print(f"Best model's root-mean-square error = {rmse}")
+
+# Get recommendations for a specific user
+user_id = 123  # example user ID
+user_recs = bestModel.recommendForAllUsers(10)
+user_recs.filter(user_recs.userId == user_id).show()
+
+# Join with movies DataFrame to display movie titles
+user_recs = user_recs.filter(user_recs.userId == user_id).select("recommendations")
+user_recs = user_recs.withColumn("recommendation", explode("recommendations"))
+user_recs = user_recs.select("recommendation.*")
+
+user_recs = user_recs.join(movies, on="movieId")
+user_recs.select("movieId", "title", "rating").show()
+
+# Stop Spark session
+spark.stop()
