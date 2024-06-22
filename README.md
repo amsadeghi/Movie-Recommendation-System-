@@ -82,6 +82,8 @@ It focuses on finding latent factors that explain observed user-item interaction
  * $M_i$​ is the latent factor vector for item $i$.
  * $λ$ is a regularization parameter to prevent overfitting.
 
+![banner](https://github.com/amsadeghi/Movie-Recommendation-System-/assets/165890457/efbddedc-6994-42d1-91c4-8b5578d20fa3)
+
 Configure the ALS model with specified parameters.
 
 Train the model using the training dataset.
