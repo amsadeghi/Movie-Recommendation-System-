@@ -1,6 +1,6 @@
 **Building a Movie Recommendation System Using PySpark**
-
-Objective:
+-
+**Objective:**
 
 Develop a movie recommendation system.
 
